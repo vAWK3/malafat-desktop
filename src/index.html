@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Malafat - Connect Your Firm</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f8f9fa;
+      color: #1a1a2e;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .container {
+      text-align: center;
+      padding: 2rem;
+      max-width: 420px;
+      width: 100%;
+    }
+    .logo {
+      width: 72px;
+      height: 72px;
+      margin: 0 auto 1.5rem;
+      background: #1a1a2e;
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 2rem;
+      font-weight: 700;
+    }
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin-bottom: 0.25rem;
+    }
+    .subtitle {
+      color: #64748b;
+      font-size: 0.875rem;
+      margin-bottom: 2rem;
+    }
+    .form-group {
+      text-align: left;
+      margin-bottom: 1rem;
+    }
+    label {
+      display: block;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      color: #475569;
+      margin-bottom: 0.375rem;
+    }
+    .input-wrapper {
+      display: flex;
+      align-items: center;
+      background: white;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      overflow: hidden;
+      transition: border-color 0.15s;
+    }
+    .input-wrapper:focus-within {
+      border-color: #1a1a2e;
+      box-shadow: 0 0 0 3px rgba(26, 26, 46, 0.08);
+    }
+    input {
+      flex: 1;
+      padding: 0.625rem 0.75rem;
+      border: none;
+      outline: none;
+      font-size: 0.9375rem;
+      font-family: inherit;
+      background: transparent;
+    }
+    .suffix {
+      padding: 0.625rem 0.75rem;
+      color: #94a3b8;
+      font-size: 0.875rem;
+      background: #f8fafc;
+      border-left: 1px solid #e2e8f0;
+      white-space: nowrap;
+    }
+    .hint {
+      font-size: 0.75rem;
+      color: #94a3b8;
+      margin-top: 0.375rem;
+    }
+    button {
+      width: 100%;
+      padding: 0.625rem 1rem;
+      background: #1a1a2e;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.9375rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s;
+      margin-top: 0.5rem;
+    }
+    button:hover { background: #2d2d4a; }
+    button:active { background: #0f0f1a; }
+    button:disabled {
+      background: #cbd5e1;
+      cursor: not-allowed;
+    }
+    .error {
+      color: #dc2626;
+      font-size: 0.8125rem;
+      margin-top: 0.5rem;
+      display: none;
+    }
+    .error.visible { display: block; }
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin: 1.5rem 0;
+      color: #94a3b8;
+      font-size: 0.75rem;
+    }
+    .divider::before,
+    .divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: #e2e8f0;
+    }
+    .fallback-link {
+      font-size: 0.8125rem;
+      color: #64748b;
+    }
+    .fallback-link a {
+      color: #1a1a2e;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .fallback-link a:hover {
+      color: #2d2d4a;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">M</div>
+    <h1>Connect Your Firm</h1>
+    <p class="subtitle">Enter your firm's Malafat URL to get started</p>
+
+    <form id="tenant-form">
+      <div class="form-group">
+        <label for="slug-input">Firm URL</label>
+        <div class="input-wrapper">
+          <input
+            id="slug-input"
+            type="text"
+            placeholder="your-firm"
+            autocomplete="off"
+            autofocus
+            spellcheck="false"
+          />
+          <span class="suffix">.malafat.app</span>
+        </div>
+        <p class="hint">The part before .malafat.app in your browser's address bar</p>
+        <p class="error" id="error-message"></p>
+      </div>
+      <button type="submit" id="connect-btn">Connect</button>
+    </form>
+
+    <div class="divider">or</div>
+
+    <p class="fallback-link">
+      Don't know your URL? <a href="https://malafat.app" target="_blank">Log in here</a> to find it in your browser's address bar.
+    </p>
+  </div>
+
+  <script>
+    const { invoke } = window.__TAURI__.core;
+
+    const form = document.getElementById('tenant-form');
+    const input = document.getElementById('slug-input');
+    const errorEl = document.getElementById('error-message');
+    const btn = document.getElementById('connect-btn');
+
+    // On load, check if we already have a stored slug
+    async function init() {
+      try {
+        const slug = await invoke('get_tenant_slug');
+        if (slug) {
+          navigateToTenant(slug);
+        }
+      } catch (e) {
+        // No stored slug, show picker
+      }
+    }
+
+    function showError(msg) {
+      errorEl.textContent = msg;
+      errorEl.classList.add('visible');
+    }
+
+    function hideError() {
+      errorEl.classList.remove('visible');
+    }
+
+    async function navigateToTenant(slug) {
+      const url = `https://${slug}.malafat.app`;
+      // Store the URL for the offline page retry
+      localStorage.setItem('malafat_retry_url', url);
+
+      // Check connectivity before navigating
+      try {
+        await fetch(url, { method: 'HEAD', mode: 'no-cors', signal: AbortSignal.timeout(5000) });
+        window.location.href = url;
+      } catch {
+        // Network unreachable — show offline page
+        window.location.href = 'offline.html';
+      }
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      hideError();
+
+      let value = input.value.trim();
+      if (!value) {
+        showError('Please enter your firm URL');
+        input.focus();
+        return;
+      }
+
+      // Strip common suffixes/prefixes users might paste
+      value = value.replace(/^https?:\/\//, '');
+      value = value.replace(/\.malafat\.app.*$/, '');
+      value = value.replace(/\/$/, '');
+
+      // Normalize to lowercase before validation
+      value = value.toLowerCase();
+
+      // Basic validation
+      if (!/^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/.test(value)) {
+        showError('Invalid URL format. Use only letters, numbers, and hyphens.');
+        input.focus();
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Connecting...';
+
+      try {
+        await invoke('set_tenant_slug', { slug: value });
+        navigateToTenant(value);
+      } catch (err) {
+        showError(err.toString());
+        btn.disabled = false;
+        btn.textContent = 'Connect';
+      }
+    });
+
+    // Clean up input as user types
+    input.addEventListener('input', () => {
+      hideError();
+    });
+
+    init();
+  </script>
+</body>
+</html>

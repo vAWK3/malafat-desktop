@@ -1,0 +1,14 @@
+{
+  "name": "malafat-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Malafat Desktop Companion - Legal Practice Management",
+  "scripts": {
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

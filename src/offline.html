@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Malafat - Offline</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f8f9fa;
+      color: #1a1a2e;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .container {
+      text-align: center;
+      padding: 2rem;
+      max-width: 400px;
+    }
+    .logo {
+      width: 64px;
+      height: 64px;
+      margin: 0 auto 1.5rem;
+      background: #1a1a2e;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 1.5rem;
+      font-weight: 700;
+    }
+    h1 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+    }
+    p {
+      color: #64748b;
+      font-size: 0.875rem;
+      line-height: 1.5;
+      margin-bottom: 1.5rem;
+    }
+    .spinner {
+      width: 24px;
+      height: 24px;
+      border: 2px solid #e2e8f0;
+      border-top-color: #1a1a2e;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 0.75rem;
+    }
+    .status {
+      font-size: 0.75rem;
+      color: #94a3b8;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">M</div>
+    <h1>No Internet Connection</h1>
+    <p>Malafat requires an internet connection to work. Please check your network and we'll reconnect automatically.</p>
+    <div class="spinner"></div>
+    <div class="status">Retrying...</div>
+  </div>
+  <script>
+    // Auto-retry every 5 seconds
+    const RETRY_INTERVAL = 5000;
+    const statusEl = document.querySelector('.status');
+    let attempt = 0;
+
+    async function tryReconnect() {
+      attempt++;
+      statusEl.textContent = `Retrying... (attempt ${attempt})`;
+      try {
+        // Try to reach the stored tenant URL
+        const stored = localStorage.getItem('malafat_retry_url');
+        const url = stored || 'https://malafat.app';
+        const response = await fetch(url, { method: 'HEAD', mode: 'no-cors' });
+        // If we get here, network is back - reload
+        window.location.href = url;
+      } catch {
+        // Still offline, retry
+        setTimeout(tryReconnect, RETRY_INTERVAL);
+      }
+    }
+
+    setTimeout(tryReconnect, RETRY_INTERVAL);
+  </script>
+</body>
+</html>

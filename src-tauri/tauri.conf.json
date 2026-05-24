@@ -1,0 +1,57 @@
+{
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-cli/config.schema.json",
+  "productName": "Malafat",
+  "version": "0.1.0",
+  "identifier": "com.barmajiyat.malafat-desktop",
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE2RjRCNzE4MjVDNjEwMjMKUldRakVNWWxHTGYwcHBZMzlCZEJ4aUExODZKZnZZdTZ1TzFDUU96cGJjQ0NaM2FzNnFoTE9TT3gK",
+      "endpoints": [
+        "https://github.com/barmajiyat/malafat-desktop/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
+  "build": {
+    "frontendDist": "../src",
+    "devUrl": "http://localhost:1420"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Malafat",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "signingIdentity": "Developer ID Application: Creative Restaurant Services for Restaurant Services (4LCWA596X7)"
+    },
+    "windows": {
+      "wix": {
+        "language": "en-US"
+      }
+    }
+  }
+}

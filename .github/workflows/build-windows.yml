@@ -1,0 +1,391 @@
+name: Build Windows Installers
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v0.0.11)'
+        required: true
+        type: string
+
+concurrency:
+  group: windows-build-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
+          shared-key: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Clean Rust build cache
+        shell: pwsh
+        run: |
+          Write-Host "Cleaning Rust build cache to ensure fresh version embedding..."
+          cargo clean --manifest-path src-tauri/Cargo.toml
+
+      - name: Build Tauri Windows app
+        run: npx tauri build
+
+      - name: Extract version from tag
+        id: version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.release.tag_name || inputs.tag }}"
+          $version = $tag -replace '^v', ''
+          Write-Host "Version: $version"
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Find and rename artifacts
+        id: artifacts
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $releaseDir = "release-artifacts"
+          New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
+
+          # Find MSI
+          $msiSource = Get-ChildItem -Path "src-tauri/target/release/bundle/msi" -Filter "*.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $msiSource) {
+            Write-Error "MSI artifact not found!"
+            exit 1
+          }
+
+          # Versioned MSI (for archival)
+          $msiVersionedName = "malafat-v$version-windows-x64.msi"
+          $msiVersionedPath = Join-Path $releaseDir $msiVersionedName
+          Copy-Item $msiSource.FullName $msiVersionedPath
+          Write-Host "MSI (versioned): $msiVersionedPath"
+          echo "msi_versioned_path=$msiVersionedPath" >> $env:GITHUB_OUTPUT
+          echo "msi_versioned_name=$msiVersionedName" >> $env:GITHUB_OUTPUT
+
+          # Stable MSI (for Netlify redirects)
+          $msiStableName = "malafat-windows-x64.msi"
+          $msiStablePath = Join-Path $releaseDir $msiStableName
+          Copy-Item $msiSource.FullName $msiStablePath
+          Write-Host "MSI (stable): $msiStablePath"
+          echo "msi_stable_path=$msiStablePath" >> $env:GITHUB_OUTPUT
+          echo "msi_stable_name=$msiStableName" >> $env:GITHUB_OUTPUT
+
+          # Find NSIS EXE
+          $exeSource = Get-ChildItem -Path "src-tauri/target/release/bundle/nsis" -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($exeSource) {
+            # Versioned EXE (for archival)
+            $exeVersionedName = "malafat-v$version-windows-x64-setup.exe"
+            $exeVersionedPath = Join-Path $releaseDir $exeVersionedName
+            Copy-Item $exeSource.FullName $exeVersionedPath
+            Write-Host "EXE (versioned): $exeVersionedPath"
+            echo "exe_versioned_path=$exeVersionedPath" >> $env:GITHUB_OUTPUT
+            echo "exe_versioned_name=$exeVersionedName" >> $env:GITHUB_OUTPUT
+
+            # Stable EXE (for Netlify redirects)
+            $exeStableName = "malafat-windows-x64-setup.exe"
+            $exeStablePath = Join-Path $releaseDir $exeStableName
+            Copy-Item $exeSource.FullName $exeStablePath
+            Write-Host "EXE (stable): $exeStablePath"
+            echo "exe_stable_path=$exeStablePath" >> $env:GITHUB_OUTPUT
+            echo "exe_stable_name=$exeStableName" >> $env:GITHUB_OUTPUT
+
+            echo "has_exe=true" >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Host "NSIS EXE not found (optional, continuing without it)"
+            echo "has_exe=false" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Build and sign NSIS updater bundle
+        id: updater
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if ("${{ steps.artifacts.outputs.has_exe }}" -ne "true") {
+            Write-Warning "No NSIS setup.exe was built; skipping updater bundle."
+            Write-Warning "Auto-update on Windows requires the NSIS installer target."
+            echo "has_updater=false" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+
+          if ([string]::IsNullOrEmpty($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            Write-Warning "TAURI_SIGNING_PRIVATE_KEY secret is not set; skipping Windows updater bundle."
+            Write-Warning "Add it in repo Settings -> Secrets and variables -> Actions to enable auto-update on Windows."
+            echo "has_updater=false" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+
+          $version = "${{ steps.version.outputs.version }}"
+          $releaseDir = "release-artifacts"
+          $exeVersionedPath = "${{ steps.artifacts.outputs.exe_versioned_path }}"
+
+          # Tauri v2's NSIS updater downloads a .nsis.zip, extracts it, and runs
+          # the setup exe inside (install mode comes from tauri.conf.json).
+          $zipName = "malafat-v$version-windows-x64-setup.nsis.zip"
+          $zipPath = Join-Path $releaseDir $zipName
+          if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+
+          Compress-Archive -Path $exeVersionedPath -DestinationPath $zipPath -Force
+          Write-Host "Created updater zip: $zipPath"
+
+          # Sign with the same minisign key deploy.sh uses on macOS. The CLI
+          # writes a .sig sidecar and prints the base64 signature to stdout.
+          $cliOutput = npx --yes @tauri-apps/cli signer sign $zipPath `
+              --private-key $env:TAURI_SIGNING_PRIVATE_KEY `
+              --password $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD 2>&1 | Out-String
+
+          $signatureLine = ($cliOutput -split "`r?`n" |
+              Where-Object { $_ -match '^dW50cnVzdGVk' } |
+              Select-Object -First 1)
+
+          if ([string]::IsNullOrEmpty($signatureLine)) {
+            Write-Error "Could not extract base64 signature from tauri signer output."
+            Write-Host "CLI output was:"
+            Write-Host $cliOutput
+            exit 1
+          }
+
+          $sigPath = "$zipPath.sig"
+          if (-not (Test-Path $sigPath)) {
+            Write-Error "Expected .sig sidecar not produced at $sigPath"
+            exit 1
+          }
+
+          Write-Host "Signed updater bundle (signature length: $($signatureLine.Length) chars)"
+
+          echo "has_updater=true" >> $env:GITHUB_OUTPUT
+          echo "updater_zip_path=$zipPath" >> $env:GITHUB_OUTPUT
+          echo "updater_zip_name=$zipName" >> $env:GITHUB_OUTPUT
+          echo "updater_sig_path=$sigPath" >> $env:GITHUB_OUTPUT
+          echo "updater_signature=$signatureLine" >> $env:GITHUB_OUTPUT
+
+      - name: Generate SHA256 checksums
+        id: checksums
+        shell: pwsh
+        run: |
+          # MSI checksums (versioned and stable)
+          $msiVersionedPath = "${{ steps.artifacts.outputs.msi_versioned_path }}"
+          $msiHash = (Get-FileHash $msiVersionedPath -Algorithm SHA256).Hash.ToLower()
+
+          $msiVersionedChecksumFile = "$msiVersionedPath.sha256"
+          Set-Content -Path $msiVersionedChecksumFile -Value $msiHash -NoNewline
+          Write-Host "MSI SHA256: $msiHash"
+          echo "msi_versioned_checksum_path=$msiVersionedChecksumFile" >> $env:GITHUB_OUTPUT
+          echo "msi_hash=$msiHash" >> $env:GITHUB_OUTPUT
+
+          $msiStablePath = "${{ steps.artifacts.outputs.msi_stable_path }}"
+          $msiStableChecksumFile = "$msiStablePath.sha256"
+          Set-Content -Path $msiStableChecksumFile -Value $msiHash -NoNewline
+          echo "msi_stable_checksum_path=$msiStableChecksumFile" >> $env:GITHUB_OUTPUT
+
+          # EXE checksums (if exists)
+          if ("${{ steps.artifacts.outputs.has_exe }}" -eq "true") {
+            $exeVersionedPath = "${{ steps.artifacts.outputs.exe_versioned_path }}"
+            $exeHash = (Get-FileHash $exeVersionedPath -Algorithm SHA256).Hash.ToLower()
+
+            $exeVersionedChecksumFile = "$exeVersionedPath.sha256"
+            Set-Content -Path $exeVersionedChecksumFile -Value $exeHash -NoNewline
+            Write-Host "EXE SHA256: $exeHash"
+            echo "exe_versioned_checksum_path=$exeVersionedChecksumFile" >> $env:GITHUB_OUTPUT
+            echo "exe_hash=$exeHash" >> $env:GITHUB_OUTPUT
+
+            $exeStablePath = "${{ steps.artifacts.outputs.exe_stable_path }}"
+            $exeStableChecksumFile = "$exeStablePath.sha256"
+            Set-Content -Path $exeStableChecksumFile -Value $exeHash -NoNewline
+            echo "exe_stable_checksum_path=$exeStableChecksumFile" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Upload artifacts to release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ github.event.release.tag_name || inputs.tag }}"
+          $maxRetries = 12
+          $retryDelay = 15
+
+          # Build list of files to upload (versioned + stable)
+          $files = @(
+            # Versioned MSI
+            "${{ steps.artifacts.outputs.msi_versioned_path }}",
+            "${{ steps.checksums.outputs.msi_versioned_checksum_path }}",
+            # Stable MSI
+            "${{ steps.artifacts.outputs.msi_stable_path }}",
+            "${{ steps.checksums.outputs.msi_stable_checksum_path }}"
+          )
+
+          if ("${{ steps.artifacts.outputs.has_exe }}" -eq "true") {
+            # Versioned EXE
+            $files += "${{ steps.artifacts.outputs.exe_versioned_path }}"
+            $files += "${{ steps.checksums.outputs.exe_versioned_checksum_path }}"
+            # Stable EXE
+            $files += "${{ steps.artifacts.outputs.exe_stable_path }}"
+            $files += "${{ steps.checksums.outputs.exe_stable_checksum_path }}"
+          }
+
+          if ("${{ steps.updater.outputs.has_updater }}" -eq "true") {
+            # Signed NSIS updater bundle + sidecar signature
+            $files += "${{ steps.updater.outputs.updater_zip_path }}"
+            $files += "${{ steps.updater.outputs.updater_sig_path }}"
+          }
+
+          Write-Host "Files to upload:"
+          $files | ForEach-Object { Write-Host "  - $_" }
+
+          # Retry logic for race conditions
+          for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+            Write-Host ""
+            Write-Host "Upload attempt $attempt of $maxRetries..."
+
+            # Check if release exists
+            $releaseCheck = gh release view $tag 2>&1
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "Release '$tag' not ready yet, waiting $retryDelay seconds..."
+              Start-Sleep -Seconds $retryDelay
+              continue
+            }
+
+            # Upload files with --clobber to overwrite if exists
+            gh release upload $tag @files --clobber
+
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host ""
+              Write-Host "Successfully uploaded Windows artifacts to release $tag"
+              exit 0
+            }
+
+            Write-Host "Upload failed, retrying in $retryDelay seconds..."
+            Start-Sleep -Seconds $retryDelay
+          }
+
+          Write-Error "Failed to upload artifacts after $maxRetries attempts"
+          exit 1
+
+      - name: Patch latest.json with windows-x86_64 entry
+        if: steps.updater.outputs.has_updater == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ github.event.release.tag_name || inputs.tag }}"
+          $zipName = "${{ steps.updater.outputs.updater_zip_name }}"
+          $signature = "${{ steps.updater.outputs.updater_signature }}"
+
+          $workDir = "manifest-patch"
+          New-Item -ItemType Directory -Path $workDir -Force | Out-Null
+          Set-Location $workDir
+
+          # deploy.sh is expected to publish a darwin-aarch64-only latest.json
+          # when cutting the mac release. We read it back, splice in the windows
+          # platform, and re-upload. If it's missing, fail loudly — we refuse to
+          # publish a windows-only manifest that would break mac auto-update.
+          gh release download $tag --pattern latest.json
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path "latest.json")) {
+            Write-Error "latest.json not found on release $tag. Run the mac release pipeline first (scripts/deploy.sh -> option 2)."
+            exit 1
+          }
+
+          $archiveUrl = "https://github.com/${{ github.repository }}/releases/download/$tag/$zipName"
+          $manifest = Get-Content "latest.json" -Raw | ConvertFrom-Json
+
+          if (-not $manifest.platforms) {
+            $manifest | Add-Member -NotePropertyName platforms -NotePropertyValue ([pscustomobject]@{}) -Force
+          }
+
+          $winEntry = [pscustomobject]@{
+            signature = $signature
+            url       = $archiveUrl
+          }
+
+          if ($manifest.platforms.PSObject.Properties.Name -contains "windows-x86_64") {
+            $manifest.platforms."windows-x86_64" = $winEntry
+          } else {
+            $manifest.platforms | Add-Member -NotePropertyName "windows-x86_64" -NotePropertyValue $winEntry -Force
+          }
+
+          $manifest | ConvertTo-Json -Depth 10 |
+              Set-Content -Path "latest.json" -Encoding UTF8NoBOM -NoNewline
+
+          Write-Host "Patched manifest:"
+          Get-Content "latest.json"
+          Write-Host ""
+
+          gh release upload $tag "latest.json" --clobber
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Failed to upload patched latest.json"
+            exit 1
+          }
+          Write-Host "latest.json patched with windows-x86_64 entry."
+
+      - name: Summary
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $tag = "${{ github.event.release.tag_name || inputs.tag }}"
+
+          Write-Host ""
+          Write-Host "========================================" -ForegroundColor Green
+          Write-Host "  Windows Build Complete!" -ForegroundColor Green
+          Write-Host "========================================" -ForegroundColor Green
+          Write-Host ""
+          Write-Host "Version: $version"
+          Write-Host "Tag: $tag"
+          Write-Host ""
+          Write-Host "Uploaded artifacts (versioned):"
+          Write-Host "  - ${{ steps.artifacts.outputs.msi_versioned_name }}"
+          Write-Host "  - ${{ steps.artifacts.outputs.msi_versioned_name }}.sha256"
+          if ("${{ steps.artifacts.outputs.has_exe }}" -eq "true") {
+            Write-Host "  - ${{ steps.artifacts.outputs.exe_versioned_name }}"
+            Write-Host "  - ${{ steps.artifacts.outputs.exe_versioned_name }}.sha256"
+          }
+          Write-Host ""
+          Write-Host "Uploaded artifacts (stable):"
+          Write-Host "  - ${{ steps.artifacts.outputs.msi_stable_name }}"
+          Write-Host "  - ${{ steps.artifacts.outputs.msi_stable_name }}.sha256"
+          if ("${{ steps.artifacts.outputs.has_exe }}" -eq "true") {
+            Write-Host "  - ${{ steps.artifacts.outputs.exe_stable_name }}"
+            Write-Host "  - ${{ steps.artifacts.outputs.exe_stable_name }}.sha256"
+          }
+          Write-Host ""
+          Write-Host "MSI SHA256: ${{ steps.checksums.outputs.msi_hash }}"
+          if ("${{ steps.artifacts.outputs.has_exe }}" -eq "true") {
+            Write-Host "EXE SHA256: ${{ steps.checksums.outputs.exe_hash }}"
+          }
+          Write-Host ""
+          if ("${{ steps.updater.outputs.has_updater }}" -eq "true") {
+            Write-Host "Auto-update (Windows): ENABLED" -ForegroundColor Green
+            Write-Host "  - ${{ steps.updater.outputs.updater_zip_name }}"
+            Write-Host "  - ${{ steps.updater.outputs.updater_zip_name }}.sig"
+            Write-Host "  - latest.json patched with windows-x86_64"
+          } else {
+            Write-Host "Auto-update (Windows): DISABLED" -ForegroundColor Yellow
+            Write-Host "  Set TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+            Write-Host "  in repo Settings -> Secrets and variables -> Actions to enable."
+          }
+          Write-Host ""
+          Write-Host "Release URL: https://github.com/${{ github.repository }}/releases/tag/$tag"

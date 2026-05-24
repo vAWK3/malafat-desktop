@@ -1,0 +1,32 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-capability",
+  "description": "Main capability for the Malafat desktop app",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["https://*.malafat.app/*"]
+  },
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "notification:default",
+    "notification:allow-is-permission-granted",
+    "notification:allow-request-permission",
+    "notification:allow-notify",
+    "store:default",
+    "store:allow-get",
+    "store:allow-set",
+    "store:allow-delete",
+    "store:allow-save",
+    "updater:default",
+    "process:default",
+    {
+      "identifier": "core:window:default",
+      "allow": [
+        { "cmd": "navigate" },
+        { "cmd": "setFocus" },
+        { "cmd": "show" }
+      ]
+    }
+  ]
+}
