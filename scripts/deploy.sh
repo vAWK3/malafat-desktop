@@ -202,9 +202,11 @@ tag_and_push() {
     echo -e "  ${YELLOW}→${NC} No changes to commit"
   fi
 
-  # Push main so origin has the commit your tag should reference
-  git push origin main
-  echo -e "  ${GREEN}✓${NC} Pushed main"
+  # Push current branch so origin has the commit your tag should reference
+  local branch
+  branch=$(git rev-parse --abbrev-ref HEAD)
+  git push origin "$branch"
+  echo -e "  ${GREEN}✓${NC} Pushed $branch"
 
   # Always refresh tags from origin (covers "remote exists, local missing")
   git fetch --tags origin >/dev/null 2>&1 || true
