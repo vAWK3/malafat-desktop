@@ -34,6 +34,29 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(
+            // Intercept navigation to /desktop/switch-firm to return to workspace chooser.
+            // The web app can link to this path to let users switch firms.
+            tauri::plugin::Builder::<tauri::Wry>::new("switch-firm-interceptor")
+                .on_navigation(|webview, url| {
+                    if url.path() == "/desktop/switch-firm" {
+                        let app = webview.app_handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            let _ = commands::clear_tenant_slug(app.clone()).await;
+                            if let Some(win) = app.get_webview_window("main") {
+                                let picker_url = tauri::Url::parse("tauri://localhost/index.html")
+                                    .unwrap_or_else(|_| {
+                                        tauri::Url::parse("https://malafat.app").unwrap()
+                                    });
+                                let _ = win.navigate(picker_url);
+                            }
+                        });
+                        return false; // Block the navigation
+                    }
+                    true
+                })
+                .build(),
+        )
         .invoke_handler(tauri::generate_handler![
             commands::show_native_notification,
             commands::get_tenant_slug,
@@ -41,6 +64,7 @@ pub fn run() {
             commands::clear_tenant_slug,
             commands::set_badge_count,
             commands::consume_pending_notification,
+            commands::navigate_to_url,
         ])
         .setup(|app| {
             // Set up system tray

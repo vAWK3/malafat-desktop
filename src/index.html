@@ -208,16 +208,15 @@
     }
 
     async function navigateToTenant(slug) {
-      const url = `https://${slug}.malafat.app`;
+      const url = `https://${slug}.malafat.app/admin`;
       // Store the URL for the offline page retry
       localStorage.setItem('malafat_retry_url', url);
 
-      // Check connectivity before navigating
+      // Navigate the Tauri webview (not the browser) to the tenant URL
       try {
-        await fetch(url, { method: 'HEAD', mode: 'no-cors', signal: AbortSignal.timeout(5000) });
-        window.location.href = url;
+        await invoke('navigate_to_url', { url });
       } catch {
-        // Network unreachable — show offline page
+        // Navigation failed (likely offline) — show offline page
         window.location.href = 'offline.html';
       }
     }

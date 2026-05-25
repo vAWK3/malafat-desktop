@@ -110,6 +110,14 @@ pub async fn consume_pending_notification(app: tauri::AppHandle) -> Result<Optio
     Ok(url)
 }
 
+/// Navigate the main webview to a URL.
+/// Used by the tenant picker to navigate to the tenant's web app.
+#[tauri::command]
+pub async fn navigate_to_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    crate::navigate_webview(&app, &url);
+    Ok(())
+}
+
 /// Normalize a tenant slug input.
 /// Accepts "acme" or "acme.malafat.app" and returns "acme".
 fn normalize_slug(input: &str) -> String {
